@@ -1,0 +1,5 @@
+{
+  "name": "Copy of FinSearch AI",
+  "description": "Simulatore di portafoglio e motore di ricerca finanziario. Analizza fino a 3 asset contemporaneamente, calcola il valore del portafoglio in Euro e visualizza grafici avanzati.",
+  "requestFramePermissions": []
+}
