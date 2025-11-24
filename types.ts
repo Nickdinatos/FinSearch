@@ -3,6 +3,12 @@ export interface HistoryPoint {
   price: number;
 }
 
+export interface AnalysisData {
+  overview: string;
+  movements: string;
+  forecast: string;
+}
+
 export interface FinancialData {
   symbol: string;
   name: string;
@@ -16,10 +22,23 @@ export interface FinancialData {
   high52Week: string;
   low52Week: string;
   volume: string;
-  description: string;
+  description: string; // Deprecated in favor of analysis, kept for legacy
+  analysis: AnalysisData; // New detailed analysis
   history: HistoryPoint[];
   sources?: string[];
-  userQuantity?: number; // Quantità posseduta nel portafoglio simulato
+  userWeight?: number; // Peso percentuale nel portafoglio (0-100)
+}
+
+export interface SavedPortfolioItem {
+  symbol: string;
+  weight: number;
+}
+
+export interface SavedPortfolio {
+  id: string;
+  name: string;
+  createdAt: number;
+  items: SavedPortfolioItem[];
 }
 
 export enum ViewState {

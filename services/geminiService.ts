@@ -6,34 +6,38 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 export const searchFinancialInstrument = async (query: string): Promise<FinancialData> => {
   try {
     const prompt = `
-      Agisci come un esperto analista finanziario. Cerca informazioni aggiornate sullo strumento finanziario: "${query}".
+      Agisci come un esperto analista finanziario senior di una banca d'investimento. 
+      Analizza lo strumento finanziario: "${query}".
       
       REQUSITO FONDAMENTALE: 
-      Tutti i prezzi e i valori monetari DEVONO essere espressi in EURO (€). Se lo strumento è quotato in un'altra valuta (es. USD), usa il tasso di cambio attuale per convertire prezzo, market cap, high/low, ecc.
+      Tutti i prezzi e i valori monetari DEVONO essere espressi in EURO (€). Converti valute estere al cambio attuale.
 
-      Ho bisogno che tu restituisca un UNICO oggetto JSON (senza testo colloquiale prima o dopo) che contenga i seguenti dati precisi trovati tramite Google Search.
+      Restituisci un UNICO oggetto JSON con i seguenti dati precisi e un'analisi approfondita in Italiano.
       
       Struttura JSON richiesta:
       {
-        "symbol": "Simbolo ticker (es. AAPL)",
-        "name": "Nome completo azienda/asset",
-        "price": numero (prezzo attuale convertito in EUR),
+        "symbol": "Ticker (es. AAPL)",
+        "name": "Nome Asset",
+        "price": numero (prezzo attuale in EUR),
         "currency": "EUR",
-        "change": numero (variazione assoluta oggi in EUR),
-        "changePercent": numero (variazione percentuale oggi, es. 1.5 per +1.5%),
-        "marketCap": "Stringa formattata in EUR (es. €2.5T)",
+        "change": numero (variazione oggi EUR),
+        "changePercent": numero (variazione % oggi),
+        "marketCap": "Stringa (es. €2.5T)",
         "peRatio": "Stringa (es. 30.5 o N/A)",
         "dividendYield": "Stringa (es. 0.5% o N/A)",
-        "high52Week": "Stringa prezzo in EUR",
-        "low52Week": "Stringa prezzo in EUR",
+        "high52Week": "Stringa prezzo EUR",
+        "low52Week": "Stringa prezzo EUR",
         "volume": "Stringa volume",
-        "description": "Una breve analisi comparativa e descrizione dello strumento in Italiano (max 300 caratteri).",
-        "history": [Array di 30 oggetti { "date": "YYYY-MM-DD", "price": numero } che simulano l'andamento plausibile degli ultimi 30 giorni basandosi sul trend attuale trovato. I prezzi nell'array devono essere in EUR.]
+        "description": "Breve intro", 
+        "analysis": {
+           "overview": "Panoramica generale dell'asset: di cosa si occupa, settore, posizionamento competitivo.",
+           "movements": "Analisi tecnica e fondamentale degli ultimi movimenti di mercato. Perché il prezzo sta cambiando? Ci sono notizie recenti (utili, trimestrali, eventi macro)?",
+           "forecast": "Previsionale a breve/medio termine basato sul sentiment attuale e trend tecnici (Bullish/Bearish/Neutral) con motivazione."
+        },
+        "history": [Array di 30 oggetti { "date": "YYYY-MM-DD", "price": numero } simulando il trend reale recente in EUR.]
       }
 
-      IMPORTANTE:
-      - Usa il tool googleSearch per trovare il prezzo ATTUALE, il tasso di cambio e le notizie recenti.
-      - Restituisci SOLO il blocco JSON all'interno di un blocco di codice markdown json.
+      Usa il tool googleSearch per dati reali. Restituisci SOLO il JSON.
     `;
 
     const response = await ai.models.generateContent({
@@ -41,13 +45,11 @@ export const searchFinancialInstrument = async (query: string): Promise<Financia
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
-        // Note: responseMimeType is NOT allowed with googleSearch, so we parse manually.
       },
     });
 
     const text = response.text || "";
     
-    // Extract JSON from markdown code block
     const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
     
     if (!jsonMatch) {
@@ -58,10 +60,17 @@ export const searchFinancialInstrument = async (query: string): Promise<Financia
     const jsonString = jsonMatch[1] || jsonMatch[0];
     const data = JSON.parse(jsonString) as FinancialData;
 
-    // Force currency label to EUR just in case
     data.currency = "EUR";
 
-    // Extract sources if available
+    // Fallback for analysis if model returns old format
+    if (!data.analysis) {
+        data.analysis = {
+            overview: data.description || "N/A",
+            movements: "Dati non disponibili per questa sezione.",
+            forecast: "Dati non disponibili per questa sezione."
+        };
+    }
+
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
     const sources: string[] = [];
     if (chunks) {
@@ -72,7 +81,6 @@ export const searchFinancialInstrument = async (query: string): Promise<Financia
       });
     }
     
-    // Deduplicate sources and limit to 3
     data.sources = [...new Set(sources)].slice(0, 3);
 
     return data;

@@ -1,117 +1,215 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MultiSearchForm } from './components/MultiSearchForm';
 import { FinancialChart } from './components/FinancialChart';
 import { MetricCard } from './components/MetricCard';
 import { PortfolioSummary } from './components/PortfolioSummary';
 import { searchFinancialInstrument } from './services/geminiService';
-import { FinancialData, ViewState } from './types';
+import { FinancialData, ViewState, SavedPortfolio } from './types';
 import { 
   TrendingUp, 
   TrendingDown, 
   Activity, 
   Globe, 
-  X,
-  Plus,
-  Layers,
-  Calculator
+  X, 
+  Save, 
+  FolderOpen,
+  ArrowRight,
+  Target,
+  BarChart3,
+  Layers
 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [viewState, setViewState] = useState<ViewState>(ViewState.IDLE);
   const [portfolios, setPortfolios] = useState<FinancialData[]>([]);
+  const [totalCapital, setTotalCapital] = useState<number>(10000);
   const [error, setError] = useState<string | null>(null);
+  
+  // Saving logic
+  const [savedPortfolios, setSavedPortfolios] = useState<SavedPortfolio[]>([]);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showLoadModal, setShowLoadModal] = useState(false);
+  const [newPortfolioName, setNewPortfolioName] = useState('');
 
-  // Function to handle multiple parallel searches
-  const handleMultiSearch = async (queries: string[]) => {
+  useEffect(() => {
+    const saved = localStorage.getItem('finsearch_portfolios');
+    if (saved) {
+      setSavedPortfolios(JSON.parse(saved));
+    }
+  }, []);
+
+  const savePortfolioToStorage = () => {
+    if (!newPortfolioName.trim()) return;
+    const newSave: SavedPortfolio = {
+      id: Date.now().toString(),
+      name: newPortfolioName,
+      createdAt: Date.now(),
+      items: portfolios.map(p => ({ symbol: p.symbol, weight: p.userWeight || 0 }))
+    };
+    const updated = [...savedPortfolios, newSave];
+    setSavedPortfolios(updated);
+    localStorage.setItem('finsearch_portfolios', JSON.stringify(updated));
+    setShowSaveModal(false);
+    setNewPortfolioName('');
+  };
+
+  const loadPortfolioFromStorage = async (portfolio: SavedPortfolio) => {
+    setShowLoadModal(false);
+    setPortfolios([]);
+    // Convert saved items format to search format
+    const queries = portfolio.items.map(i => ({ query: i.symbol, weight: i.weight }));
+    await handleMultiSearch(queries);
+  };
+
+  const deleteSavedPortfolio = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = savedPortfolios.filter(p => p.id !== id);
+    setSavedPortfolios(updated);
+    localStorage.setItem('finsearch_portfolios', JSON.stringify(updated));
+  };
+
+  const handleMultiSearch = async (items: { query: string, weight: number }[]) => {
     setViewState(ViewState.LOADING);
     setError(null);
     
-    // Clear previous if performing a fresh search from hero, 
-    // or append? The user prompt implies "3 simultaneous buttons", 
-    // usually implies a fresh start or add. Let's assume add to existing 
-    // unless it's the initial screen. 
-    // Actually, simply adding them is safest.
+    // Filter duplicates against existing *only if needed*, but for new portfolio generation we usually clear.
+    // However, specs say "insert portfolis". Let's assume we replace or append.
+    // Given the "Generate Portfolio" button nature, we'll replace the current view or add to it.
+    // Let's implement smart merging: Update weight if exists, Add if new.
     
-    const uniqueQueries = queries.filter(q => 
-      !portfolios.some(p => p.symbol.toLowerCase() === q.toLowerCase())
-    );
-
-    if (uniqueQueries.length === 0) {
-      setViewState(ViewState.SUCCESS);
-      return;
-    }
-
+    // We initiate a new clean search for simplicity and stability for now, or allow mix?
+    // Let's clear and load new set to act as a "Generator".
+    
     try {
-      const promises = uniqueQueries.map(q => searchFinancialInstrument(q));
+      const uniqueItems = items.filter((item, index, self) => 
+        index === self.findIndex((t) => (
+          t.query.toLowerCase() === item.query.toLowerCase()
+        ))
+      );
+
+      const promises = uniqueItems.map(item => searchFinancialInstrument(item.query));
       const results = await Promise.allSettled(promises);
       
-      const newItems: FinancialData[] = [];
-      let failureCount = 0;
-
-      results.forEach(res => {
+      const newValues: FinancialData[] = [];
+      
+      results.forEach((res, index) => {
         if (res.status === 'fulfilled') {
-          // Initialize with quantity 1
-          newItems.push({ ...res.value, userQuantity: 1 });
+          newValues.push({ 
+            ...res.value, 
+            userWeight: uniqueItems[index].weight 
+          });
         } else {
-          failureCount++;
           console.error(res.reason);
         }
       });
 
-      if (newItems.length > 0) {
-        setPortfolios(prev => [...prev, ...newItems]);
+      if (newValues.length > 0) {
+        setPortfolios(newValues);
         setViewState(ViewState.SUCCESS);
-      } else if (failureCount > 0) {
-        setError("Impossibile trovare gli strumenti richiesti. Riprova con nomi più specifici.");
-        setViewState(ViewState.ERROR);
       } else {
-        setViewState(ViewState.SUCCESS);
+        setError("Nessuno strumento trovato.");
+        setViewState(ViewState.ERROR);
       }
 
-    } catch (err: any) {
-      console.error(err);
-      setError("Errore di sistema imprevisto.");
+    } catch (err) {
+      setError("Errore durante la ricerca.");
       setViewState(ViewState.ERROR);
     }
   };
 
   const handleRemove = (symbol: string) => {
-    setPortfolios(prev => prev.filter(item => item.symbol !== symbol));
-    if (portfolios.length <= 1) { // Will be 0
-      // Keep viewstate success to show empty state or idle?
-      // If 0 items, go IDLE to show hero
-    }
-  };
-
-  const updateQuantity = (symbol: string, qty: number) => {
-    setPortfolios(prev => prev.map(item => {
-      if (item.symbol === symbol) {
-        return { ...item, userQuantity: qty > 0 ? qty : 0 };
-      }
-      return item;
-    }));
+    const updated = portfolios.filter(item => item.symbol !== symbol);
+    setPortfolios(updated);
+    if (updated.length === 0) setViewState(ViewState.IDLE);
   };
 
   const hasItems = portfolios.length > 0;
 
   return (
-    <div className="min-h-screen bg-slate-950 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black text-slate-100 font-sans selection:bg-primary-500/30">
+    <div className="min-h-screen bg-slate-950 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black text-slate-100 font-sans selection:bg-primary-500/30 pb-20">
       
-      {/* Header (Minimal) */}
-      <header className="absolute top-0 w-full z-50 p-6 flex justify-between items-center">
-        {hasItems && (
+      {/* Navbar */}
+      <header className="fixed top-0 w-full z-50 bg-slate-950/80 backdrop-blur-md border-b border-slate-800">
+        <div className="max-w-[1600px] mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => { setPortfolios([]); setViewState(ViewState.IDLE); }}>
              <Layers className="w-6 h-6 text-primary-500" />
              <span className="font-bold text-xl tracking-tight">FinSearch</span>
           </div>
-        )}
+
+          <div className="flex gap-3">
+             <button 
+                onClick={() => setShowLoadModal(true)}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition"
+             >
+                <FolderOpen className="w-4 h-4" /> Portafogli
+             </button>
+             {hasItems && (
+               <button 
+                  onClick={() => setShowSaveModal(true)}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition shadow-lg shadow-emerald-900/20"
+               >
+                  <Save className="w-4 h-4" /> Salva
+               </button>
+             )}
+          </div>
+        </div>
       </header>
 
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8 min-h-screen flex flex-col justify-center">
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-24 min-h-screen flex flex-col">
         
-        {/* Hero Search Section */}
-        {!hasItems ? (
-          <div className="flex flex-col items-center justify-center animate-in fade-in zoom-in duration-700">
+        {/* Load Modal */}
+        {showLoadModal && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+             <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+                <div className="flex justify-between items-center mb-4">
+                   <h3 className="text-xl font-bold">I tuoi Portafogli</h3>
+                   <button onClick={() => setShowLoadModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
+                </div>
+                <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                   {savedPortfolios.length === 0 ? (
+                      <p className="text-slate-500 text-center py-8">Nessun portafoglio salvato.</p>
+                   ) : (
+                      savedPortfolios.map(p => (
+                         <div key={p.id} onClick={() => loadPortfolioFromStorage(p)} className="flex items-center justify-between p-4 bg-slate-800 hover:bg-slate-700 rounded-xl cursor-pointer group transition">
+                            <div>
+                               <div className="font-bold text-white">{p.name}</div>
+                               <div className="text-xs text-slate-400">{new Date(p.createdAt).toLocaleDateString()} • {p.items.length} Asset</div>
+                            </div>
+                            <button onClick={(e) => deleteSavedPortfolio(p.id, e)} className="p-2 hover:bg-rose-500/20 hover:text-rose-400 rounded-full text-slate-500">
+                               <X className="w-4 h-4" />
+                            </button>
+                         </div>
+                      ))
+                   )}
+                </div>
+             </div>
+          </div>
+        )}
+
+        {/* Save Modal */}
+        {showSaveModal && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+             <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+                <h3 className="text-xl font-bold mb-4">Salva Portafoglio</h3>
+                <input 
+                  autoFocus
+                  type="text" 
+                  placeholder="Nome portafoglio (es. Tech Growth)"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-primary-500 mb-4"
+                  value={newPortfolioName}
+                  onChange={(e) => setNewPortfolioName(e.target.value)}
+                />
+                <div className="flex gap-2 justify-end">
+                   <button onClick={() => setShowSaveModal(false)} className="px-4 py-2 text-slate-400 hover:text-white">Annulla</button>
+                   <button onClick={savePortfolioToStorage} disabled={!newPortfolioName} className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-500 disabled:opacity-50">Salva</button>
+                </div>
+             </div>
+          </div>
+        )}
+
+        {/* Hero / Form */}
+        {!hasItems && (
+          <div className="flex flex-col items-center justify-center animate-in fade-in zoom-in duration-700 mt-10">
             <div className="mb-8 flex items-center justify-center bg-slate-900/50 p-4 rounded-full border border-slate-800 shadow-2xl">
               <Layers className="w-10 h-10 text-primary-500 mr-3" />
               <h1 className="text-5xl md:text-7xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-400 tracking-tighter">
@@ -120,7 +218,7 @@ const App: React.FC = () => {
             </div>
             
             <p className="text-lg text-slate-400 mb-10 max-w-xl text-center">
-              Inserisci fino a 3 strumenti per creare istantaneamente un portafoglio simulato, confrontare grafici e analizzare i trend in Euro.
+              Inserisci fino a 4 strumenti, definisci il peso percentuale e ottieni un'analisi approfondita e previsionale.
             </p>
 
             <MultiSearchForm onSearch={handleMultiSearch} isLoading={viewState === ViewState.LOADING} />
@@ -131,141 +229,128 @@ const App: React.FC = () => {
               </div>
             )}
           </div>
-        ) : (
-          <div className="pt-20 pb-10 w-full">
-            
-            {/* Portfolio Summary Dashboard */}
-            <PortfolioSummary items={portfolios} />
+        )}
 
-            {/* Input for adding more? */}
-            <div className="mb-8 flex justify-end">
-              {portfolios.length < 6 ? (
-                 <div className="w-full md:w-auto">
-                    {/* Reuse simplified form or a button to open modal? For simplicity, we just put the form at bottom or top. 
-                        Let's put a simplified adder here or just rely on the user refreshing. 
-                        Actually, let's keep it clean.
-                    */}
-                 </div>
-              ) : null}
-            </div>
+        {hasItems && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
+            
+            {/* Summary */}
+            <PortfolioSummary items={portfolios} totalCapital={totalCapital} onUpdateCapital={setTotalCapital} />
 
             {/* Grid */}
-            <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8`}>
-              
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               {portfolios.map((data) => {
                 const isPositive = data.change >= 0;
+                // Calcolo quantità simulata: (Capital * Weight%) / Price
+                const simulatedQty = ((totalCapital * (data.userWeight || 0)) / 100) / data.price;
+                const simulatedValue = simulatedQty * data.price;
                 
                 return (
-                  <div key={data.symbol} className="bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-3xl overflow-hidden shadow-2xl transition-all hover:border-slate-600 group">
+                  <div key={data.symbol} className="bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-3xl overflow-hidden shadow-2xl transition-all hover:border-slate-600 group flex flex-col">
                     
-                    {/* Card Header */}
+                    {/* Header */}
                     <div className="p-6 border-b border-slate-800 relative bg-gradient-to-b from-slate-800/50 to-transparent">
                       <button 
                         onClick={() => handleRemove(data.symbol)}
-                        className="absolute top-4 right-4 p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-400/10 rounded-full transition-colors opacity-0 group-hover:opacity-100"
-                        title="Rimuovi dal portafoglio"
+                        className="absolute top-4 right-4 p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-400/10 rounded-full transition-colors opacity-0 group-hover:opacity-100 z-10"
                       >
                         <X className="w-5 h-5" />
                       </button>
                       
-                      <div className="flex justify-between items-start mb-4">
+                      <div className="flex justify-between items-start mb-6">
                         <div className="flex items-center gap-3">
-                           {/* Icon placeholder based on type could go here */}
-                           <div className="bg-slate-800 p-2 rounded-xl border border-slate-700">
-                             <span className="text-lg font-bold text-white">{data.symbol.substring(0,2)}</span>
+                           <div className="bg-slate-800 p-3 rounded-2xl border border-slate-700 shadow-inner">
+                             <span className="text-xl font-black text-white">{data.symbol.substring(0,2)}</span>
                            </div>
                            <div>
-                              <h2 className="text-xl font-bold text-white">{data.symbol}</h2>
-                              <h3 className="text-xs text-slate-400 font-medium uppercase tracking-wider">{data.name}</h3>
+                              <h2 className="text-2xl font-bold text-white">{data.symbol}</h2>
+                              <h3 className="text-xs text-slate-400 font-medium uppercase tracking-wider max-w-[200px] truncate">{data.name}</h3>
                            </div>
                         </div>
                         <div className="text-right">
-                           <div className="text-2xl font-bold text-white tabular-nums tracking-tight">
+                           <div className="text-3xl font-bold text-white tabular-nums tracking-tight">
                               €{data.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                            </div>
-                           <div className={`flex items-center justify-end gap-1 text-xs font-bold px-2 py-1 rounded-full w-fit ml-auto ${isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                              {isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                           <div className={`flex items-center justify-end gap-1 text-sm font-bold mt-1 ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                               <span>{data.changePercent.toFixed(2)}%</span>
                            </div>
                         </div>
                       </div>
 
-                      {/* Portfolio Quantity Input */}
-                      <div className="flex items-center gap-3 bg-slate-950/50 p-3 rounded-xl border border-dashed border-slate-800">
-                        <Calculator className="w-4 h-4 text-primary-400" />
-                        <label className="text-xs text-slate-400 font-medium">Quantità:</label>
-                        <input 
-                          type="number" 
-                          min="0" 
-                          step="any"
-                          value={data.userQuantity || ''}
-                          onChange={(e) => updateQuantity(data.symbol, parseFloat(e.target.value) || 0)}
-                          className="w-24 bg-transparent border-b border-slate-600 text-white text-sm font-bold text-right focus:outline-none focus:border-primary-500 transition-colors"
-                        />
-                        <div className="text-xs text-slate-500 ml-auto">
-                          Valore: <span className="text-slate-200">€{((data.userQuantity || 0) * data.price).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                        </div>
+                      {/* Position Info */}
+                      <div className="grid grid-cols-2 gap-4 bg-slate-950/30 p-4 rounded-xl border border-slate-800/50">
+                          <div>
+                            <span className="text-[10px] uppercase text-slate-500 font-bold">Peso Portafoglio</span>
+                            <div className="text-lg font-bold text-white">{data.userWeight}%</div>
+                          </div>
+                          <div className="text-right">
+                             <span className="text-[10px] uppercase text-slate-500 font-bold">Valore Simulato</span>
+                             <div className="text-lg font-bold text-primary-400">€{simulatedValue.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                          </div>
                       </div>
                     </div>
 
-                    <div className="flex-1 flex flex-col p-6 gap-6">
+                    <div className="p-6 flex-1 flex flex-col gap-6">
                       
                       {/* Chart */}
-                      <div className="relative">
-                         <div className="absolute top-0 left-0 text-[10px] text-slate-500 font-mono">TREND 30D</div>
+                      <div className="h-[250px] w-full bg-slate-900/20 rounded-xl overflow-hidden border border-slate-800/50 p-2">
                          <FinancialChart data={data.history} color={data.change >= 0 ? '#10b981' : '#f43f5e'} />
                       </div>
 
-                      {/* Metrics Grid */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <MetricCard label="Cap. Mercato" value={data.marketCap} />
-                        <MetricCard label="P/E Ratio" value={data.peRatio} />
-                        <MetricCard label="Div. Yield" value={data.dividendYield} />
-                         <MetricCard label="Range 52W" value={data.high52Week} subValue={`Low: ${data.low52Week}`} />
+                      {/* Key Metrics */}
+                      <div className="grid grid-cols-3 gap-2">
+                        <MetricCard label="Mkt Cap" value={data.marketCap} />
+                        <MetricCard label="P/E" value={data.peRatio} />
+                        <MetricCard label="Range 52W" value={data.high52Week} />
                       </div>
 
-                      {/* AI Description */}
-                      <div className="bg-slate-800/30 rounded-xl p-4 border border-slate-700/30 flex-1 relative overflow-hidden">
-                         <div className="absolute top-0 left-0 w-1 h-full bg-primary-600"></div>
-                         <div className="flex items-center gap-2 mb-2 text-primary-400 text-xs font-bold uppercase tracking-wider">
-                            <Activity className="w-3 h-3" /> Analisi AI
+                      {/* Analysis Sections */}
+                      <div className="space-y-4 mt-2">
+                         
+                         {/* Overview */}
+                         <div className="bg-slate-800/20 rounded-xl p-4 border border-slate-700/30">
+                            <h4 className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase mb-2">
+                               <Activity className="w-3 h-3 text-blue-400" /> Panoramica
+                            </h4>
+                            <p className="text-sm text-slate-400 leading-relaxed">{data.analysis.overview}</p>
                          </div>
-                         <p className="text-sm text-slate-400 leading-relaxed font-light">
-                            {data.description}
-                         </p>
+
+                         {/* Movements */}
+                         <div className="bg-slate-800/20 rounded-xl p-4 border border-slate-700/30">
+                            <h4 className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase mb-2">
+                               <BarChart3 className="w-3 h-3 text-purple-400" /> Analisi Movimenti
+                            </h4>
+                            <p className="text-sm text-slate-400 leading-relaxed">{data.analysis.movements}</p>
+                         </div>
+
+                         {/* Forecast */}
+                         <div className="bg-gradient-to-br from-indigo-900/20 to-slate-900 rounded-xl p-4 border border-indigo-500/20">
+                            <h4 className="flex items-center gap-2 text-xs font-bold text-indigo-300 uppercase mb-2">
+                               <Target className="w-3 h-3" /> Previsionale
+                            </h4>
+                            <p className="text-sm text-indigo-100/80 leading-relaxed italic">
+                               "{data.analysis.forecast}"
+                            </p>
+                         </div>
+
                       </div>
 
                       {/* Sources */}
-                      {data.sources && data.sources.length > 0 && (
-                         <div className="flex flex-wrap gap-2 mt-auto border-t border-slate-800 pt-4">
-                            {data.sources.map((source, idx) => (
-                               <a 
-                                  key={idx} 
-                                  href={source} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="flex items-center gap-1 text-[10px] text-slate-600 hover:text-primary-400 transition-colors bg-slate-900 px-2 py-1 rounded"
-                               >
-                                  <Globe className="w-3 h-3" />
-                                  Fonte {idx + 1}
-                               </a>
+                      {data.sources && (
+                         <div className="flex items-center gap-2 mt-auto pt-4 border-t border-slate-800/50">
+                            <Globe className="w-3 h-3 text-slate-600" />
+                            <div className="flex gap-2">
+                            {data.sources.map((src, i) => (
+                               <a key={i} href={src} target="_blank" rel="noreferrer" className="text-[10px] text-slate-500 hover:text-primary-400 underline">Fonte {i+1}</a>
                             ))}
+                            </div>
                          </div>
                       )}
                     </div>
                   </div>
                 );
               })}
-              
-              {/* Add New Slot */}
-              <div className="min-h-[600px] border-2 border-dashed border-slate-800 rounded-3xl flex flex-col items-center justify-center p-8 text-slate-600 hover:text-primary-400 hover:border-primary-500/30 hover:bg-slate-900/20 transition-all cursor-pointer group" onClick={() => setPortfolios([])}>
-                 <div className="w-20 h-20 rounded-full bg-slate-900 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                    <Plus className="w-8 h-8" />
-                 </div>
-                 <p className="font-medium text-lg">Nuova Ricerca</p>
-                 <p className="text-sm mt-2 opacity-50 text-center max-w-xs">Clicca qui per resettare la dashboard e cercare nuovi asset</p>
-              </div>
-
             </div>
           </div>
         )}
