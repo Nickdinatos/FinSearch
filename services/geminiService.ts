@@ -1,5 +1,6 @@
+
 import { GoogleGenAI } from "@google/genai";
-import { FinancialData } from "../types";
+import { FinancialData, PortfolioAnalysis } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -88,5 +89,49 @@ export const searchFinancialInstrument = async (query: string): Promise<Financia
   } catch (error) {
     console.error("Gemini API Error:", error);
     throw error;
+  }
+};
+
+export const analyzePortfolioStrategy = async (items: FinancialData[]): Promise<PortfolioAnalysis> => {
+  try {
+    const portfolioDesc = items.map(i => `${i.symbol} (${i.userWeight}%): ${i.analysis.forecast}`).join('\n');
+    
+    const prompt = `
+      Agisci come un Portfolio Manager Senior. Analizza il seguente portafoglio simulato composto da questi asset:
+      ${portfolioDesc}
+
+      Fornisci una sintesi strategica JSON in Italiano:
+      {
+        "diversification": "Analisi sulla diversificazione (settoriale, geografica). Il portafoglio è ben bilanciato o troppo concentrato?",
+        "riskProfile": "Valutazione del rischio complessivo (Basso/Medio/Alto) e volatilità attesa.",
+        "strategyForecast": "Previsione sintetica sull'andamento congiunto del portafoglio nei prossimi mesi."
+      }
+      Restituisci SOLO il JSON.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    const text = response.text || "";
+    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
+    
+    if (!jsonMatch) return { 
+       diversification: "Dati non disponibili", 
+       riskProfile: "Dati non disponibili", 
+       strategyForecast: "Dati non disponibili" 
+    };
+
+    const jsonString = jsonMatch[1] || jsonMatch[0];
+    return JSON.parse(jsonString) as PortfolioAnalysis;
+
+  } catch (error) {
+    console.error("Portfolio Analysis Error", error);
+    return {
+       diversification: "Impossibile generare l'analisi.",
+       riskProfile: "N/A",
+       strategyForecast: "N/A"
+    };
   }
 };

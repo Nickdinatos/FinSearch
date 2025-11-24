@@ -1,10 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
 import { MultiSearchForm } from './components/MultiSearchForm';
 import { FinancialChart } from './components/FinancialChart';
 import { MetricCard } from './components/MetricCard';
 import { PortfolioSummary } from './components/PortfolioSummary';
-import { searchFinancialInstrument } from './services/geminiService';
-import { FinancialData, ViewState, SavedPortfolio } from './types';
+import { searchFinancialInstrument, analyzePortfolioStrategy } from './services/geminiService';
+import { FinancialData, ViewState, SavedPortfolio, PortfolioAnalysis } from './types';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -22,6 +23,9 @@ import {
 const App: React.FC = () => {
   const [viewState, setViewState] = useState<ViewState>(ViewState.IDLE);
   const [portfolios, setPortfolios] = useState<FinancialData[]>([]);
+  const [portfolioAnalysis, setPortfolioAnalysis] = useState<PortfolioAnalysis | null>(null);
+  const [isAnalyzingPortfolio, setIsAnalyzingPortfolio] = useState(false);
+  
   const [totalCapital, setTotalCapital] = useState<number>(10000);
   const [error, setError] = useState<string | null>(null);
   
@@ -56,6 +60,7 @@ const App: React.FC = () => {
   const loadPortfolioFromStorage = async (portfolio: SavedPortfolio) => {
     setShowLoadModal(false);
     setPortfolios([]);
+    setPortfolioAnalysis(null);
     // Convert saved items format to search format
     const queries = portfolio.items.map(i => ({ query: i.symbol, weight: i.weight }));
     await handleMultiSearch(queries);
@@ -70,15 +75,8 @@ const App: React.FC = () => {
 
   const handleMultiSearch = async (items: { query: string, weight: number }[]) => {
     setViewState(ViewState.LOADING);
+    setPortfolioAnalysis(null);
     setError(null);
-    
-    // Filter duplicates against existing *only if needed*, but for new portfolio generation we usually clear.
-    // However, specs say "insert portfolis". Let's assume we replace or append.
-    // Given the "Generate Portfolio" button nature, we'll replace the current view or add to it.
-    // Let's implement smart merging: Update weight if exists, Add if new.
-    
-    // We initiate a new clean search for simplicity and stability for now, or allow mix?
-    // Let's clear and load new set to act as a "Generator".
     
     try {
       const uniqueItems = items.filter((item, index, self) => 
@@ -106,6 +104,14 @@ const App: React.FC = () => {
       if (newValues.length > 0) {
         setPortfolios(newValues);
         setViewState(ViewState.SUCCESS);
+        
+        // Trigger Portfolio Analysis
+        setIsAnalyzingPortfolio(true);
+        analyzePortfolioStrategy(newValues).then(analysis => {
+           setPortfolioAnalysis(analysis);
+           setIsAnalyzingPortfolio(false);
+        });
+
       } else {
         setError("Nessuno strumento trovato.");
         setViewState(ViewState.ERROR);
@@ -120,7 +126,19 @@ const App: React.FC = () => {
   const handleRemove = (symbol: string) => {
     const updated = portfolios.filter(item => item.symbol !== symbol);
     setPortfolios(updated);
-    if (updated.length === 0) setViewState(ViewState.IDLE);
+    if (updated.length === 0) {
+      setViewState(ViewState.IDLE);
+      setPortfolioAnalysis(null);
+    } else {
+      // Re-analyze remaining items? Optional. 
+      // For now, let's just clear the analysis as it might be invalid.
+      // Or we can re-trigger:
+      setIsAnalyzingPortfolio(true);
+      analyzePortfolioStrategy(updated).then(analysis => {
+          setPortfolioAnalysis(analysis);
+          setIsAnalyzingPortfolio(false);
+      });
+    }
   };
 
   const hasItems = portfolios.length > 0;
@@ -234,8 +252,14 @@ const App: React.FC = () => {
         {hasItems && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
             
-            {/* Summary */}
-            <PortfolioSummary items={portfolios} totalCapital={totalCapital} onUpdateCapital={setTotalCapital} />
+            {/* Summary & Portfolio Analysis */}
+            <PortfolioSummary 
+               items={portfolios} 
+               totalCapital={totalCapital} 
+               onUpdateCapital={setTotalCapital} 
+               analysis={portfolioAnalysis}
+               isAnalyzing={isAnalyzingPortfolio}
+            />
 
             {/* Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">

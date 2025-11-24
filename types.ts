@@ -1,3 +1,4 @@
+
 export interface HistoryPoint {
   date: string;
   price: number;
@@ -7,6 +8,12 @@ export interface AnalysisData {
   overview: string;
   movements: string;
   forecast: string;
+}
+
+export interface PortfolioAnalysis {
+  diversification: string;
+  riskProfile: string;
+  strategyForecast: string;
 }
 
 export interface FinancialData {
